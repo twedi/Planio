@@ -1,5 +1,6 @@
 import React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
+import { PressableScale } from './Motion';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { AppText } from './AppText';
 import { useTheme } from '../ThemeContext';
@@ -47,7 +48,7 @@ export function PrioritySelector({ value, onChange }: { value: PriorityKey; onCh
         const sel = value === p;
         const pc = c.priority[p];
         return (
-          <Pressable
+          <PressableScale scaleTo={0.95}
             key={p}
             onPress={() => {
               tap();
@@ -70,7 +71,7 @@ export function PrioritySelector({ value, onChange }: { value: PriorityKey; onCh
             <AppText variant="label" color={sel ? pc.fg : 'textSecondary'} numberOfLines={1}>
               {PRIORITY_LABEL[p]}
             </AppText>
-          </Pressable>
+          </PressableScale>
         );
       })}
     </View>
@@ -82,7 +83,7 @@ export function ChoiceChip({ label, icon, selected, onPress }: { label: string; 
   const { theme } = useTheme();
   const c = theme.colors;
   return (
-    <Pressable
+    <PressableScale scaleTo={0.95}
       onPress={() => {
         tap();
         onPress();
@@ -103,14 +104,14 @@ export function ChoiceChip({ label, icon, selected, onPress }: { label: string; 
       <AppText variant="label" color={selected ? 'onPrimaryContainer' : 'text'}>
         {label}
       </AppText>
-    </Pressable>
+    </PressableScale>
   );
 }
 
 export function TagChip({ label, onPress, onRemove }: { label: string; onPress?: () => void; onRemove?: () => void }) {
   const { theme } = useTheme();
   return (
-    <Pressable
+    <PressableScale scaleTo={0.95}
       onPress={onPress ?? onRemove}
       disabled={!onPress && !onRemove}
       style={{
@@ -127,7 +128,7 @@ export function TagChip({ label, onPress, onRemove }: { label: string; onPress?:
         {'#' + label}
       </AppText>
       {onRemove ? <MaterialCommunityIcons name="close" size={14} color={theme.colors.onPrimaryContainer} /> : null}
-    </Pressable>
+    </PressableScale>
   );
 }
 

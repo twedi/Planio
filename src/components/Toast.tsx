@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
 import { Pressable, View } from 'react-native';
-import Animated, { FadeOut, SlideInDown } from 'react-native-reanimated';
+import Animated, { FadeInDown, FadeOut } from 'react-native-reanimated';
+import { EASE_OUT } from './Motion';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText } from './AppText';
@@ -40,7 +41,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       {toast ? (
         <Animated.View
           key={toast.id}
-          entering={SlideInDown.springify().damping(18)}
+          entering={FadeInDown.duration(240).easing(EASE_OUT)}
           exiting={FadeOut.duration(160)}
           style={{
             position: 'absolute',

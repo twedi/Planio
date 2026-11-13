@@ -1,5 +1,6 @@
 import React from 'react';
-import { StatusBar, View, ViewStyle } from 'react-native';
+import { View, ViewStyle } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../ThemeContext';
 
@@ -15,7 +16,7 @@ export function Screen({ children, style, bottomInset = false }: Props) {
         style,
       ]}
     >
-      <StatusBar barStyle={theme.dark ? 'light-content' : 'dark-content'} backgroundColor="transparent" translucent />
+      <StatusBar style={theme.dark ? 'light' : 'dark'} />
       {children}
     </View>
   );

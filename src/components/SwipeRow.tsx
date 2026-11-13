@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { Animated, PanResponder, View } from 'react-native';
+import { Animated, Easing, PanResponder, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { AppText } from './AppText';
 import { useTheme } from '../ThemeContext';
@@ -53,7 +53,7 @@ export function SwipeRow({ children, onSwipeRight, rightLabel = 'Tamamla', onSwi
       onPanResponderRelease: (_e, g) => {
         const w = width.current;
         if (g.dx > w * THRESHOLD && p.current.onSwipeRight) {
-          Animated.spring(x, { toValue: 0, useNativeDriver: false, bounciness: 6 }).start();
+          Animated.timing(x, { toValue: 0, duration: 200, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
           p.current.onSwipeRight();
         } else if (g.dx < -w * THRESHOLD && p.current.onSwipeLeft) {
           Animated.timing(x, { toValue: -w, duration: 160, useNativeDriver: false }).start(() => {
@@ -61,11 +61,11 @@ export function SwipeRow({ children, onSwipeRight, rightLabel = 'Tamamla', onSwi
             setTimeout(() => x.setValue(0), 400);
           });
         } else {
-          Animated.spring(x, { toValue: 0, useNativeDriver: false, bounciness: 8 }).start();
+          Animated.timing(x, { toValue: 0, duration: 200, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
         }
       },
       onPanResponderTerminate: () => {
-        Animated.spring(x, { toValue: 0, useNativeDriver: false }).start();
+        Animated.timing(x, { toValue: 0, duration: 200, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
       },
     })
   ).current;

@@ -1,4 +1,4 @@
-import { getDb } from './index';
+import { getDb, tx } from './index';
 import { DEFAULT_LISTS, TemplateList } from './templates';
 import { addDays, addRepeat, diffDays, startOfDay } from '../dates';
 import type { PriorityKey } from '../theme';
@@ -237,10 +237,9 @@ export async function getBoardsWithLists(): Promise<BoardWithLists[]> {
 export type BoardInput = { name: string; description: string; color: string; icon: string };
 
 export async function createBoard(input: BoardInput & { lists: TemplateList[] }): Promise<number> {
-  const db = await getDb();
   const lists = normalizeLists(input.lists.length ? input.lists : DEFAULT_LISTS);
   let boardId = 0;
-  await db.withTransactionAsync(async () => {
+  await tx(async (db) => {
     const maxRow = await db.getFirstAsync<{ m: number | null }>('SELECT MAX(sort) AS m FROM boards');
     const res = await db.runAsync('INSERT INTO boards (name, description, color, icon, sort) VALUES (?, ?, ?, ?, ?)', [
       input.name,
@@ -299,10 +298,9 @@ async function writeListOrder(ids: number[]): Promise<void> {
 
 /** Yeni liste tamamlanma listesinin önüne eklenir (yoksa sona) */
 export async function addList(boardId: number, name: string): Promise<number> {
-  const db = await getDb();
-  const lists = await getLists(boardId);
   let newId = 0;
-  await db.withTransactionAsync(async () => {
+  await tx(async (db) => {
+    const lists = await getLists(boardId);
     const res = await db.runAsync('INSERT INTO lists (board_id, name, sort, is_done) VALUES (?, ?, ?, 0)', [boardId, name, lists.length]);
     newId = res.lastInsertRowId;
     const ids = lists.map((l) => l.id);
@@ -325,25 +323,23 @@ export async function deleteList(id: number): Promise<void> {
 }
 
 export async function moveList(listId: number, dir: -1 | 1): Promise<void> {
-  const db = await getDb();
-  const list = await getList(listId);
-  if (!list) return;
-  const lists = await getLists(list.board_id);
-  const idx = lists.findIndex((l) => l.id === listId);
-  const j = idx + dir;
-  if (idx < 0 || j < 0 || j >= lists.length) return;
-  const ids = lists.map((l) => l.id);
-  [ids[idx], ids[j]] = [ids[j], ids[idx]];
-  await db.withTransactionAsync(async () => {
+  await tx(async () => {
+    const list = await getList(listId);
+    if (!list) return;
+    const lists = await getLists(list.board_id);
+    const idx = lists.findIndex((l) => l.id === listId);
+    const j = idx + dir;
+    if (idx < 0 || j < 0 || j >= lists.length) return;
+    const ids = lists.map((l) => l.id);
+    [ids[idx], ids[j]] = [ids[j], ids[idx]];
     await writeListOrder(ids);
   });
 }
 
 /** Bir listeyi panonun tamamlanma listesi yapar (null: hiçbiri). İçindeki kartlar tamamlanmış sayılır. */
 export async function setDoneList(boardId: number, listId: number | null): Promise<void> {
-  const db = await getDb();
   const now = new Date().toISOString();
-  await db.withTransactionAsync(async () => {
+  await tx(async (db) => {
     await db.runAsync('UPDATE lists SET is_done = CASE WHEN id = ? THEN 1 ELSE 0 END WHERE board_id = ?', [listId ?? -1, boardId]);
     if (listId) {
       await db.runAsync('UPDATE cards SET done = 1, completed_at = COALESCE(completed_at, ?) WHERE list_id = ?', [now, listId]);
@@ -417,19 +413,33 @@ async function writeSubtasks(cardId: number, subtasks: { title: string; done: bo
 async function writeTags(cardId: number, tags: string[]): Promise<void> {
   const db = await getDb();
   await db.runAsync('DELETE FROM card_tags WHERE card_id = ?', [cardId]);
+  // Var olan etiketler Türkçe küçük harfe göre eşleştirilir: "İş" ve "iş" aynı etikettir.
+  // (Tablodaki UNIQUE kuralı büyük/küçük harfe duyarlı olduğu için eşleştirme burada yapılır.)
+  const existing = new Map<string, number>();
+  for (const t of await db.getAllAsync<{ id: number; name: string }>('SELECT id, name FROM tags ORDER BY id DESC')) {
+    existing.set(t.name.toLocaleLowerCase('tr-TR'), t.id);
+  }
   const seen = new Set<string>();
   for (const raw of tags) {
     const name = raw.trim();
     const key = name.toLocaleLowerCase('tr-TR');
     if (!name || seen.has(key)) continue;
     seen.add(key);
-    await db.runAsync('INSERT OR IGNORE INTO tags (name) VALUES (?)', [name]);
-    const t = await db.getFirstAsync<{ id: number }>('SELECT id FROM tags WHERE name = ?', [name]);
-    if (t) await db.runAsync('INSERT OR IGNORE INTO card_tags (card_id, tag_id) VALUES (?, ?)', [cardId, t.id]);
+    let tagId = existing.get(key);
+    if (tagId === undefined) {
+      const res = await db.runAsync('INSERT INTO tags (name) VALUES (?)', [name]);
+      tagId = res.lastInsertRowId;
+    }
+    await db.runAsync('INSERT OR IGNORE INTO card_tags (card_id, tag_id) VALUES (?, ?)', [cardId, tagId]);
   }
 }
 
-export async function saveCard(input: SaveCardInput): Promise<number> {
+export function saveCard(input: SaveCardInput): Promise<number> {
+  return tx(() => saveCardInner(input));
+}
+
+/** saveCard'ın işlem (tx) içinde çalışan gövdesi; başka bir tx içinden de çağrılabilir */
+async function saveCardInner(input: SaveCardInput): Promise<number> {
   const db = await getDb();
   let cardId = input.id ?? 0;
   let becameDone = false;
@@ -438,7 +448,7 @@ export async function saveCard(input: SaveCardInput): Promise<number> {
   const done = input.done || !!target?.is_done;
   const nowIso = new Date().toISOString();
 
-  await db.withTransactionAsync(async () => {
+  {
     if (input.id) {
       const prev = await db.getFirstAsync<{ list_id: number; sort: number; done: number }>(
         'SELECT list_id, sort, done FROM cards WHERE id = ?',
@@ -494,7 +504,7 @@ export async function saveCard(input: SaveCardInput): Promise<number> {
     }
     await writeSubtasks(cardId, input.subtasks);
     await writeTags(cardId, input.tags);
-  });
+  }
 
   if (becameDone) await spawnNext(cardId);
   if (becameUndone) await undoSpawn(cardId);
@@ -528,7 +538,7 @@ async function spawnNext(cardId: number): Promise<void> {
     listId = open.id;
   }
 
-  const newId = await saveCard({
+  const newId = await saveCardInner({
     list_id: listId,
     title: card.title,
     description: card.description,
@@ -568,7 +578,11 @@ export async function deleteCard(id: number): Promise<void> {
   await db.runAsync('DELETE FROM cards WHERE id = ?', [id]);
 }
 
-export async function duplicateCard(id: number): Promise<number | null> {
+export function duplicateCard(id: number): Promise<number | null> {
+  return tx(() => duplicateCardInner(id));
+}
+
+async function duplicateCardInner(id: number): Promise<number | null> {
   const res = await getCard(id);
   if (!res) return null;
   const { card, subtasks } = res;
@@ -577,7 +591,7 @@ export async function duplicateCard(id: number): Promise<number | null> {
     const open = (await getLists(card.board_id)).find((l) => !l.is_done);
     if (open) listId = open.id;
   }
-  return saveCard({
+  return saveCardInner({
     list_id: listId,
     title: `${card.title} (kopya)`,
     description: card.description,
@@ -607,7 +621,11 @@ async function getPlace(cardId: number): Promise<CardPlace | null> {
  * Tamamlandı işareti. Panonun tamamlanma listesi varsa kart oraya taşınır;
  * işaret kaldırılınca ilk açık listeye geri döner.
  */
-export async function setCardDone(cardId: number, done: boolean): Promise<void> {
+export function setCardDone(cardId: number, done: boolean): Promise<void> {
+  return tx(() => setCardDoneInner(cardId, done));
+}
+
+async function setCardDoneInner(cardId: number, done: boolean): Promise<void> {
   const db = await getDb();
   const place = await getPlace(cardId);
   if (!place) return;
@@ -637,7 +655,11 @@ export async function setCardDone(cardId: number, done: boolean): Promise<void> 
   if (!done && place.done) await undoSpawn(cardId);
 }
 
-export async function moveCardToList(cardId: number, listId: number): Promise<void> {
+export function moveCardToList(cardId: number, listId: number): Promise<void> {
+  return tx(() => moveCardToListInner(cardId, listId));
+}
+
+async function moveCardToListInner(cardId: number, listId: number): Promise<void> {
   const db = await getDb();
   const place = await getPlace(cardId);
   const target = await getList(listId);
@@ -658,8 +680,7 @@ export async function moveCardToList(cardId: number, listId: number): Promise<vo
 }
 
 export async function reorderCards(orderedIds: number[]): Promise<void> {
-  const db = await getDb();
-  await db.withTransactionAsync(async () => {
+  await tx(async (db) => {
     for (let i = 0; i < orderedIds.length; i++) {
       await db.runAsync('UPDATE cards SET sort = ? WHERE id = ?', [i, orderedIds[i]]);
     }
@@ -753,8 +774,7 @@ export async function getCounts(): Promise<{ boards: number; cards: number; done
 
 /** Panoları, kartları, etiketleri ve basit listeleri siler. Şablonlar ve ayarlar kalır. */
 export async function wipeAll(): Promise<void> {
-  const db = await getDb();
-  await db.withTransactionAsync(async () => {
+  await tx(async (db) => {
     await db.runAsync('DELETE FROM card_tags');
     await db.runAsync('DELETE FROM subtasks');
     await db.runAsync('DELETE FROM cards');
@@ -771,11 +791,15 @@ export async function wipeAll(): Promise<void> {
 export type CardSnapshot = { card: CardView; subtasks: SubtaskRow[] };
 
 /** Silinen kartı "Geri al" ile yeniden oluşturur */
-export async function restoreCard(snap: CardSnapshot): Promise<number | null> {
+export function restoreCard(snap: CardSnapshot): Promise<number | null> {
+  return tx(() => restoreCardInner(snap));
+}
+
+async function restoreCardInner(snap: CardSnapshot): Promise<number | null> {
   const list = await getList(snap.card.list_id);
   if (!list) return null;
   const { card } = snap;
-  const id = await saveCard({
+  const id = await saveCardInner({
     list_id: card.list_id,
     title: card.title,
     description: card.description,

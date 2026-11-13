@@ -30,7 +30,7 @@ type Props<T> = {
   ListHeaderComponent?: React.ReactElement | null;
   ListFooterComponent?: React.ReactElement | null;
   /** Dışarıdan kaydırma kontrolü için (ör. yeni öğe eklenince sona kaydır) */
-  scrollRef?: React.RefObject<ScrollView | null>;
+  scrollRef?: React.RefObject<React.ComponentRef<typeof ScrollView> | null>;
   /** Öğeler arası boşluk */
   gap?: number;
 };
@@ -58,9 +58,9 @@ export function ReorderableList<T>(props: Props<T>) {
   const offsets = useRef(new Map<string, Animated.Value>()).current;
   const responders = useRef(new Map<string, PanResponderInstance>()).current;
 
-  const containerRef = useRef<View>(null);
-  const ownScrollRef = useRef<ScrollView>(null);
-  const scrollRef = (props.scrollRef ?? ownScrollRef) as React.RefObject<ScrollView>;
+  const containerRef = useRef<React.ComponentRef<typeof View>>(null);
+  const ownScrollRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  const scrollRef = (props.scrollRef ?? ownScrollRef) as React.RefObject<React.ComponentRef<typeof ScrollView> | null>;
   const scrollY = useRef(0);
   const contentH = useRef(0);
   const viewport = useRef({ top: 0, height: 0 });

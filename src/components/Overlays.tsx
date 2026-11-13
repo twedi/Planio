@@ -1,10 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, TextInput, View } from 'react-native';
+import Animated, { FadeInDown, SlideInDown } from 'react-native-reanimated';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { EASE_OUT } from './Motion';
 import { AppText } from './AppText';
 import { Button } from './Button';
 import { useTheme } from '../ThemeContext';
 import { fonts } from '../theme';
+
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 export type SheetOption = {
   label: string;
@@ -21,7 +25,11 @@ export function ActionSheet({ visible, title, options, onClose }: { visible: boo
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }} onPress={onClose}>
-        <Pressable style={{ backgroundColor: c.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 28, maxHeight: '80%' }}>
+        {/* Sayfa alttan kayarak gelir; arka plan Modal ile birlikte belirir */}
+        <AnimatedPressable
+          entering={SlideInDown.duration(260).easing(EASE_OUT)}
+          style={{ backgroundColor: c.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 28, maxHeight: '80%' }}
+        >
           <View style={{ alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: c.border, marginBottom: 12 }} />
           {title ? (
             <AppText variant="subtitle" style={{ marginBottom: 6, marginHorizontal: 8 }} numberOfLines={1}>
@@ -56,7 +64,7 @@ export function ActionSheet({ visible, title, options, onClose }: { visible: boo
             ))}
           </ScrollView>
           <Button label="Vazgeç" variant="outline" onPress={onClose} style={{ marginTop: 8 }} />
-        </Pressable>
+        </AnimatedPressable>
       </Pressable>
     </Modal>
   );
@@ -98,7 +106,7 @@ export function PromptModal({
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', padding: 24 }} onPress={onClose}>
-          <Pressable style={{ backgroundColor: c.surface, borderRadius: 20, padding: 20 }}>
+          <AnimatedPressable entering={FadeInDown.duration(220).easing(EASE_OUT)} style={{ backgroundColor: c.surface, borderRadius: 20, padding: 20 }}>
             <AppText variant="subtitle" style={{ marginBottom: 12 }}>
               {title}
             </AppText>
@@ -126,7 +134,7 @@ export function PromptModal({
               <Button label="Vazgeç" variant="outline" onPress={onClose} style={{ flex: 1 }} />
               <Button label={confirmLabel} onPress={submit} style={{ flex: 1 }} />
             </View>
-          </Pressable>
+          </AnimatedPressable>
         </Pressable>
       </KeyboardAvoidingView>
     </Modal>

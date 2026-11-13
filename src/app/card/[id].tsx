@@ -1,0 +1,736 @@
+import React, { useEffect, useState } from 'react';
+import { Alert, Pressable, ScrollView, TextInput, View } from 'react-native';
+import { useKeyboardHeight, useRevealOnFocus } from '@/useKeyboard';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
+import { KeyboardSafeView } from '@/components/KeyboardSafeView';
+import { Screen } from '@/components/Screen';
+import { AppText } from '@/components/AppText';
+import { Button } from '@/components/Button';
+import { Checkbox } from '@/components/Checkbox';
+import { ChoiceChip, PrioritySelector, REPEAT_LABEL, TagChip } from '@/components/Chips';
+import { FieldLabel, IconButton, ScreenHeader, Surface } from '@/components/Form';
+import { BoardIcon } from '@/components/Pickers';
+import { ProgressBar } from '@/components/ProgressBar';
+import { useTheme } from '@/ThemeContext';
+import {
+  Board,
+  BoardWithLists,
+  deleteCard,
+  duplicateCard,
+  getAllTags,
+  getBoard,
+  getBoardsWithLists,
+  getCard,
+  getList,
+  getLists,
+  ListRow,
+  Repeat,
+  saveCard,
+} from '@/db/repo';
+import {
+  addDays,
+  formatHm,
+  isSameDay,
+  longDate,
+  parseDayKey,
+  quickDates,
+  quickRanges,
+  rangeText,
+  relativeDay,
+  shortDate,
+  spanDays,
+  startOfDay,
+  timeText,
+} from '@/dates';
+import { syncNotifications } from '@/notifications';
+import { fonts, PriorityKey } from '@/theme';
+import { success, tap } from '@/haptics';
+
+type Sub = { key: string; title: string; done: boolean };
+let keyCounter = 0;
+const nextKey = () => `s${++keyCounter}`;
+
+const TIME_PRESETS: [number, number][] = [
+  [9, 0],
+  [12, 0],
+  [18, 0],
+  [21, 0],
+];
+const REPEATS: Repeat[] = ['none', 'daily', 'weekly', 'monthly'];
+
+export default function CardScreen() {
+  const params = useLocalSearchParams<{ id: string; listId?: string; due?: string }>();
+  const isNew = params.id === 'new';
+  const router = useRouter();
+  const { theme } = useTheme();
+  const c = theme.colors;
+
+  const [ready, setReady] = useState(false);
+  const [quickMode, setQuickMode] = useState(false);
+  const [boards, setBoards] = useState<BoardWithLists[]>([]);
+  const [board, setBoard] = useState<Board | null>(null);
+  const [lists, setLists] = useState<ListRow[]>([]);
+  const [listId, setListId] = useState(0);
+
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [done, setDone] = useState(false);
+  const [due, setDue] = useState<Date | null>(null);
+  const [start, setStart] = useState<Date | null>(null);
+  const [rangeMode, setRangeMode] = useState(false);
+  const [hasTime, setHasTime] = useState(false);
+  const [priority, setPriority] = useState<PriorityKey>('medium');
+  const [repeat, setRepeat] = useState<Repeat>('none');
+  const [tags, setTags] = useState<string[]>([]);
+  const [allTags, setAllTags] = useState<string[]>([]);
+  const [addingTag, setAddingTag] = useState(false);
+  const [tagText, setTagText] = useState('');
+  const [subs, setSubs] = useState<Sub[]>([]);
+  const [subText, setSubText] = useState('');
+  const [focusMinutes, setFocusMinutes] = useState(0);
+  const kb = useKeyboardHeight();
+  const scroll = useRevealOnFocus();
+
+  const applyBoard = (b: Board, ls: ListRow[], preferList?: number) => {
+    setBoard(b);
+    setLists(ls);
+    const fallback = ls.find((l) => !l.is_done)?.id ?? ls[0]?.id ?? 0;
+    setListId(preferList && ls.some((l) => l.id === preferList) ? preferList : fallback);
+  };
+
+  useEffect(() => {
+    (async () => {
+      setAllTags(await getAllTags());
+      if (isNew) {
+        if (params.listId) {
+          const list = await getList(Number(params.listId));
+          const b = list ? await getBoard(list.board_id) : null;
+          if (!list || !b) {
+            router.back();
+            return;
+          }
+          applyBoard(b, await getLists(b.id), list.id);
+          if (list.is_done) setDone(true);
+        } else {
+          const bs = await getBoardsWithLists();
+          if (!bs.length) {
+            Alert.alert('Önce bir pano oluştur', 'Kart eklemek için en az bir panon olmalı.', [
+              { text: 'Pano oluştur', onPress: () => router.replace('/board/new') },
+              { text: 'Vazgeç', style: 'cancel', onPress: () => router.back() },
+            ]);
+            return;
+          }
+          setBoards(bs);
+          setQuickMode(true);
+          applyBoard(bs[0], bs[0].lists);
+        }
+        if (params.due) {
+          const d = params.due === 'today' ? startOfDay(new Date()) : parseDayKey(params.due);
+          if (d) setDue(d);
+        }
+      } else {
+        const res = await getCard(Number(params.id));
+        if (!res) {
+          router.back();
+          return;
+        }
+        const { card, subtasks } = res;
+        const b = await getBoard(card.board_id);
+        if (b) applyBoard(b, await getLists(b.id), card.list_id);
+        setTitle(card.title);
+        setFocusMinutes(card.focus_minutes ?? 0);
+        setDescription(card.description);
+        setDone(!!card.done);
+        setDue(card.due_at ? new Date(card.due_at) : null);
+        if (card.start_at && card.due_at) {
+          setStart(startOfDay(new Date(card.start_at)));
+          setRangeMode(true);
+        }
+        setHasTime(!!card.due_has_time);
+        setPriority(card.priority);
+        setRepeat(card.repeat);
+        setTags(card.tags);
+        setSubs(subtasks.map((s) => ({ key: nextKey(), title: s.title, done: !!s.done })));
+      }
+      setReady(true);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const doneList = lists.find((l) => l.is_done);
+  const firstOpen = lists.find((l) => !l.is_done);
+  const currentList = lists.find((l) => l.id === listId);
+
+  /* ---------- Tamamlandı & liste ---------- */
+
+  const toggleDone = () => {
+    const nd = !done;
+    if (nd) success();
+    else tap();
+    setDone(nd);
+    if (nd && doneList) setListId(doneList.id);
+    if (!nd && currentList?.is_done && firstOpen) setListId(firstOpen.id);
+  };
+
+  const selectList = (l: ListRow) => {
+    setListId(l.id);
+    if (l.is_done) setDone(true);
+    else if (currentList?.is_done) setDone(false);
+  };
+
+  const selectBoard = (b: BoardWithLists) => {
+    applyBoard(b, b.lists);
+    setDone(false);
+  };
+
+  /* ---------- Tarih & saat ---------- */
+
+  const setDay = (d: Date) => {
+    const x = new Date(d);
+    if (hasTime && due) x.setHours(due.getHours(), due.getMinutes(), 0, 0);
+    else x.setHours(0, 0, 0, 0);
+    setDue(x);
+  };
+
+  const pickCustomDate = () =>
+    DateTimePickerAndroid.open({
+      value: due ?? new Date(),
+      mode: 'date',
+      onChange: (e, d) => {
+        if (e.type === 'set' && d) setDay(d);
+      },
+    });
+
+  const setTime = (h: number, m: number) => {
+    const base = due ? new Date(due) : startOfDay(new Date());
+    base.setHours(h, m, 0, 0);
+    setDue(base);
+    setHasTime(true);
+  };
+
+  const clearTime = () => {
+    if (due) {
+      const x = new Date(due);
+      x.setHours(0, 0, 0, 0);
+      setDue(x);
+    }
+    setHasTime(false);
+  };
+
+  const pickCustomTime = () =>
+    DateTimePickerAndroid.open({
+      value: due ?? new Date(),
+      mode: 'time',
+      is24Hour: true,
+      onChange: (e, t) => {
+        if (e.type === 'set' && t) setTime(t.getHours(), t.getMinutes());
+      },
+    });
+
+  const clearDue = () => {
+    tap();
+    setDue(null);
+    setStart(null);
+    setRangeMode(false);
+    setHasTime(false);
+    setRepeat('none');
+  };
+
+  const chooseRepeat = (r: Repeat) => {
+    setRepeat(r);
+    if (r !== 'none' && !due) setDay(new Date());
+  };
+
+  /** Bitiş gününü değiştirir, saat bilgisini korur */
+  const setEndDay = (d: Date, keep: Date | null = due) => {
+    const x = new Date(d);
+    if (hasTime && keep) x.setHours(keep.getHours(), keep.getMinutes(), 0, 0);
+    else x.setHours(0, 0, 0, 0);
+    setDue(x);
+  };
+
+  const setRange = (on: boolean) => {
+    if (on) {
+      const s = startOfDay(due ?? new Date());
+      setStart(s);
+      if (!due || startOfDay(due) <= s) setEndDay(addDays(s, 2));
+      setRangeMode(true);
+    } else {
+      setStart(null);
+      setRangeMode(false);
+    }
+  };
+
+  const applyRange = (s: Date, e: Date) => {
+    setStart(startOfDay(s));
+    setEndDay(e);
+  };
+
+  const pickStart = () =>
+    DateTimePickerAndroid.open({
+      value: start ?? new Date(),
+      mode: 'date',
+      onChange: (ev, d) => {
+        if (ev.type !== 'set' || !d) return;
+        const s = startOfDay(d);
+        setStart(s);
+        if (!due || startOfDay(due) < s) setEndDay(s);
+      },
+    });
+
+  const pickEnd = () =>
+    DateTimePickerAndroid.open({
+      value: due ?? start ?? new Date(),
+      mode: 'date',
+      onChange: (ev, d) => {
+        if (ev.type !== 'set' || !d) return;
+        setEndDay(d);
+        if (start && startOfDay(d) < start) setStart(startOfDay(d));
+      },
+    });
+
+  const qRanges = quickRanges();
+  const quick = quickDates();
+  const quickMatch = due ? quick.find((q) => isSameDay(q.date, due)) : undefined;
+  const presetMatch = hasTime && due ? TIME_PRESETS.find(([h, m]) => due.getHours() === h && due.getMinutes() === m) : undefined;
+
+  /* ---------- Etiket & alt görev ---------- */
+
+  const addTag = (name: string) => {
+    const n = name.trim().replace(/^#/, '');
+    if (n && !tags.some((t) => t.toLocaleLowerCase('tr-TR') === n.toLocaleLowerCase('tr-TR'))) setTags([...tags, n]);
+    setTagText('');
+    setAddingTag(false);
+  };
+
+  const addSub = () => {
+    const t = subText.trim();
+    if (!t) return;
+    setSubs([...subs, { key: nextKey(), title: t, done: false }]);
+    setSubText('');
+  };
+
+  /* ---------- Kaydet / sil ---------- */
+
+  const save = async () => {
+    if (!title.trim()) {
+      Alert.alert('Başlık gerekli', 'Kartına kısa bir başlık yaz.');
+      return;
+    }
+    if (!listId) {
+      Alert.alert('Liste seç', 'Kartın hangi listeye ekleneceğini seç.');
+      return;
+    }
+    await saveCard({
+      id: isNew ? undefined : Number(params.id),
+      list_id: listId,
+      title: title.trim(),
+      description: description.trim(),
+      start_at: rangeMode && start && due && startOfDay(due) > startOfDay(start) ? startOfDay(start).toISOString() : null,
+      due_at: due ? due.toISOString() : null,
+      due_has_time: !!due && hasTime,
+      priority,
+      done,
+      repeat: due ? repeat : 'none',
+      tags,
+      subtasks: subs.map((s) => ({ title: s.title, done: s.done })),
+    });
+    syncNotifications();
+    router.back();
+  };
+
+  const remove = () => {
+    Alert.alert('Kartı sil', 'Bu kart kalıcı olarak silinecek.', [
+      { text: 'Vazgeç', style: 'cancel' },
+      {
+        text: 'Sil',
+        style: 'destructive',
+        onPress: async () => {
+          await deleteCard(Number(params.id));
+          syncNotifications();
+          router.back();
+        },
+      },
+    ]);
+  };
+
+  const duplicate = async () => {
+    await duplicateCard(Number(params.id));
+    Alert.alert('Kopyalandı', 'Kartın bir kopyası aynı listeye eklendi.');
+  };
+
+  const subDone = subs.filter((s) => s.done).length;
+  const suggestions = allTags.filter((t) => !tags.some((x) => x.toLocaleLowerCase('tr-TR') === t.toLocaleLowerCase('tr-TR')));
+
+  if (!ready) return <Screen>{null}</Screen>;
+
+  return (
+    <Screen bottomInset>
+      <KeyboardSafeView>
+        <ScreenHeader
+          title={isNew ? 'Yeni kart' : 'Kartı düzenle'}
+          onBack={() => router.back()}
+          right={
+            kb > 0 ? (
+              <IconButton icon="check" tone="tonal" onPress={save} />
+            ) : !isNew ? (
+              <View style={{ flexDirection: 'row' }}>
+                <IconButton icon="timer-outline" tone="tonal" onPress={() => router.push({ pathname: '/focus/[id]', params: { id: String(params.id) } })} />
+                <IconButton icon="content-copy" onPress={duplicate} />
+              </View>
+            ) : undefined
+          }
+        />
+
+        <ScrollView
+          ref={scroll.ref}
+          contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 32 }}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Konum */}
+          {board ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
+              <BoardIcon icon={board.icon} color={board.color} size={22} />
+              <AppText variant="small" color="textSecondary">{`${board.name} / ${currentList?.name ?? ''}`}</AppText>
+            </View>
+          ) : null}
+
+          {/* Başlık + tamamlandı */}
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginTop: 16 }}>
+            <View style={{ paddingTop: 6 }}>
+              <Checkbox shape="circle" size={30} checked={done} onPress={toggleDone} />
+            </View>
+            <TextInput
+              value={title}
+              onChangeText={setTitle}
+              placeholder="Ne yapılacak?"
+              placeholderTextColor={c.textSecondary}
+              multiline
+              autoFocus={isNew}
+              style={{
+                flex: 1,
+                color: done ? c.textSecondary : c.text,
+                fontFamily: fonts.bold,
+                fontSize: 22,
+                lineHeight: 28,
+                paddingVertical: 4,
+                textDecorationLine: done ? 'line-through' : 'none',
+              }}
+            />
+          </View>
+          {done ? (
+            <AppText variant="caption" color="primary" style={{ marginLeft: 42, marginTop: 2 }}>
+              Tamamlandı olarak işaretli
+            </AppText>
+          ) : null}
+          {focusMinutes > 0 ? (
+            <AppText variant="caption" color="textSecondary" style={{ marginLeft: 42, marginTop: 2 }}>
+              {`Bu göreve ${focusMinutes} dakika odaklandın`}
+            </AppText>
+          ) : null}
+
+          {/* Açıklama */}
+          <View onLayout={scroll.track('desc')} />
+          <Surface style={{ padding: 12, marginTop: 14 }}>
+            <AppText variant="caption" color="textSecondary">
+              Açıklama
+            </AppText>
+            <TextInput
+              value={description}
+              onChangeText={setDescription}
+              onFocus={() => scroll.reveal('desc')}
+              placeholder="İstersen not ekle"
+              placeholderTextColor={c.textSecondary}
+              multiline
+              style={{ color: c.text, fontFamily: fonts.regular, fontSize: 15, minHeight: 44, paddingTop: 4 }}
+            />
+          </Surface>
+
+          {/* Öncelik */}
+          <FieldLabel>Öncelik</FieldLabel>
+          <PrioritySelector value={priority} onChange={setPriority} />
+
+          {/* Tarih */}
+          <FieldLabel
+            right={
+              due ? (
+                <Pressable onPress={clearDue} hitSlop={8}>
+                  <AppText variant="label" color="danger">
+                    Tarihi kaldır
+                  </AppText>
+                </Pressable>
+              ) : undefined
+            }
+          >
+            Tarih
+          </FieldLabel>
+          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
+            <ChoiceChip label="Tek gün" icon="calendar-today" selected={!rangeMode} onPress={() => setRange(false)} />
+            <ChoiceChip label="Tarih aralığı" icon="arrow-expand-horizontal" selected={rangeMode} onPress={() => setRange(true)} />
+          </View>
+
+          {!rangeMode ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+              {quick.map((q) => (
+                <ChoiceChip key={q.key} label={q.label} selected={quickMatch?.key === q.key} onPress={() => setDay(q.date)} />
+              ))}
+              <ChoiceChip
+                label={due && !quickMatch ? shortDate(due) : 'Tarih seç'}
+                icon="calendar-month-outline"
+                selected={!!due && !quickMatch}
+                onPress={pickCustomDate}
+              />
+            </ScrollView>
+          ) : (
+            <>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                {qRanges.map((r) => (
+                  <ChoiceChip
+                    key={r.key}
+                    label={r.label}
+                    selected={!!start && !!due && isSameDay(start, r.start) && isSameDay(due, r.end)}
+                    onPress={() => applyRange(r.start, r.end)}
+                  />
+                ))}
+              </ScrollView>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 }}>
+                <Pressable onPress={pickStart} style={{ flex: 1 }}>
+                  <Surface style={{ padding: 12 }}>
+                    <AppText variant="caption" color="textSecondary">
+                      Başlangıç
+                    </AppText>
+                    <AppText variant="body" style={{ marginTop: 2 }}>
+                      {start ? shortDate(start) : 'Seç'}
+                    </AppText>
+                    <AppText variant="caption" color="textSecondary">
+                      {start ? relativeDay(start) : ' '}
+                    </AppText>
+                  </Surface>
+                </Pressable>
+                <MaterialCommunityIcons name="arrow-right" size={20} color={c.textSecondary} />
+                <Pressable onPress={pickEnd} style={{ flex: 1 }}>
+                  <Surface style={{ padding: 12 }}>
+                    <AppText variant="caption" color="textSecondary">
+                      Bitiş
+                    </AppText>
+                    <AppText variant="body" style={{ marginTop: 2 }}>
+                      {due ? shortDate(due) : 'Seç'}
+                    </AppText>
+                    <AppText variant="caption" color="textSecondary">
+                      {due ? relativeDay(due) : ' '}
+                    </AppText>
+                  </Surface>
+                </Pressable>
+              </View>
+            </>
+          )}
+
+          {due ? (
+            <Surface style={{ marginTop: 12, padding: 14 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: c.primaryContainer, alignItems: 'center', justifyContent: 'center' }}>
+                  <MaterialCommunityIcons
+                    name={rangeMode ? 'calendar-range' : 'calendar-month-outline'}
+                    size={24}
+                    color={c.onPrimaryContainer}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <AppText variant="body">
+                    {rangeMode && start ? `${rangeText(start, due)} · ${spanDays(start, due)} gün` : longDate(due)}
+                  </AppText>
+                  <AppText variant="small" color="textSecondary">
+                    {(rangeMode && start ? `${relativeDay(start)} başlıyor` : relativeDay(due)) +
+                      (hasTime ? ` · bitiş saati ${timeText(due)}` : ' · saat belirtilmedi')}
+                  </AppText>
+                </View>
+              </View>
+
+              <AppText variant="label" color="textSecondary" style={{ marginTop: 14, marginBottom: 8 }}>
+                {rangeMode ? 'Bitiş saati' : 'Saat'}
+              </AppText>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                <ChoiceChip label="Saat yok" selected={!hasTime} onPress={clearTime} />
+                {TIME_PRESETS.map(([h, m]) => (
+                  <ChoiceChip key={`${h}:${m}`} label={formatHm(h, m)} selected={presetMatch?.[0] === h && presetMatch?.[1] === m} onPress={() => setTime(h, m)} />
+                ))}
+                <ChoiceChip
+                  label={hasTime && !presetMatch ? timeText(due) : 'Saat seç'}
+                  icon="clock-outline"
+                  selected={hasTime && !presetMatch}
+                  onPress={pickCustomTime}
+                />
+              </ScrollView>
+            </Surface>
+          ) : null}
+
+          {/* Tekrar */}
+          <FieldLabel>Tekrar</FieldLabel>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+            {REPEATS.map((r) => (
+              <ChoiceChip key={r} label={r === 'none' ? 'Yok' : REPEAT_LABEL[r]} icon={r === 'none' ? undefined : 'repeat'} selected={repeat === r} onPress={() => chooseRepeat(r)} />
+            ))}
+          </ScrollView>
+          {repeat !== 'none' ? (
+            <AppText variant="caption" color="textSecondary" style={{ marginTop: 6 }}>
+              Tamamladığında bir sonraki tarih için yeni kart otomatik oluşur.
+            </AppText>
+          ) : null}
+
+          {/* Pano (hızlı ekleme) */}
+          {quickMode && boards.length > 1 ? (
+            <>
+              <FieldLabel>Pano</FieldLabel>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                {boards.map((b) => (
+                  <ChoiceChip key={b.id} label={b.name} selected={board?.id === b.id} onPress={() => selectBoard(b)} />
+                ))}
+              </ScrollView>
+            </>
+          ) : null}
+
+          {/* Liste */}
+          <FieldLabel>Liste</FieldLabel>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+            {lists.map((l) => (
+              <ChoiceChip
+                key={l.id}
+                label={l.name}
+                icon={l.is_done ? 'check-circle-outline' : undefined}
+                selected={l.id === listId}
+                onPress={() => selectList(l)}
+              />
+            ))}
+          </ScrollView>
+
+          {/* Etiketler */}
+          <View onLayout={scroll.track('tags')} />
+          <FieldLabel>Etiketler</FieldLabel>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+            {tags.map((t) => (
+              <TagChip key={t} label={t} onRemove={() => setTags(tags.filter((x) => x !== t))} />
+            ))}
+            {addingTag ? (
+              <TextInput
+                autoFocus
+                value={tagText}
+                onChangeText={setTagText}
+                onSubmitEditing={() => addTag(tagText)}
+                onFocus={() => scroll.reveal('tags')}
+                onBlur={() => (tagText.trim() ? addTag(tagText) : setAddingTag(false))}
+                placeholder="etiket adı"
+                placeholderTextColor={c.textSecondary}
+                style={{
+                  minWidth: 110,
+                  height: 34,
+                  paddingVertical: 0,
+                  color: c.text,
+                  fontFamily: fonts.regular,
+                  fontSize: 14,
+                  borderBottomWidth: 1.5,
+                  borderBottomColor: c.primary,
+                }}
+              />
+            ) : (
+              <Pressable onPress={() => setAddingTag(true)} hitSlop={6} style={{ flexDirection: 'row', alignItems: 'center', gap: 2, height: 30 }}>
+                <MaterialCommunityIcons name="plus" size={18} color={c.primary} />
+                <AppText variant="label" color="primary">
+                  Etiket ekle
+                </AppText>
+              </Pressable>
+            )}
+          </View>
+          {addingTag && suggestions.length > 0 ? (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+              {suggestions.map((t) => (
+                <TagChip key={t} label={t} onPress={() => addTag(t)} />
+              ))}
+            </View>
+          ) : null}
+
+          {/* Alt görevler */}
+          <View onLayout={scroll.track('subs')} />
+          <FieldLabel
+            right={
+              subs.length > 0 ? (
+                <AppText variant="label" color="primary">{`${subDone}/${subs.length} tamamlandı`}</AppText>
+              ) : undefined
+            }
+          >
+            Alt görevler
+          </FieldLabel>
+          {subs.length > 0 ? (
+            <View style={{ marginBottom: 6 }}>
+              <ProgressBar value={subDone / subs.length} />
+            </View>
+          ) : null}
+          {subs.map((s) => (
+            <View
+              key={s.key}
+              onLayout={scroll.track(`sub-${s.key}`)}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: c.border }}
+            >
+              <Checkbox
+                checked={s.done}
+                onPress={() => {
+                  tap();
+                  setSubs(subs.map((x) => (x.key === s.key ? { ...x, done: !x.done } : x)));
+                }}
+              />
+              <TextInput
+                value={s.title}
+                onChangeText={(v) => setSubs(subs.map((x) => (x.key === s.key ? { ...x, title: v } : x)))}
+                onFocus={() => scroll.reveal(`sub-${s.key}`, 200)}
+                style={{
+                  flex: 1,
+                  color: s.done ? c.textSecondary : c.text,
+                  fontFamily: fonts.regular,
+                  fontSize: 15,
+                  paddingVertical: 4,
+                  textDecorationLine: s.done ? 'line-through' : 'none',
+                }}
+              />
+              <Pressable hitSlop={10} onPress={() => setSubs(subs.filter((x) => x.key !== s.key))}>
+                <MaterialCommunityIcons name="close" size={20} color={c.textSecondary} />
+              </Pressable>
+            </View>
+          ))}
+          <View onLayout={scroll.track('subinput')} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8 }}>
+            <MaterialCommunityIcons name="plus" size={24} color={c.primary} />
+            <TextInput
+              value={subText}
+              onChangeText={setSubText}
+              onSubmitEditing={() => {
+                addSub();
+                scroll.reveal('subinput', 260);
+              }}
+              onFocus={() => scroll.reveal('subinput', 260)}
+              placeholder="Alt görev ekle"
+              placeholderTextColor={c.primary}
+              returnKeyType="done"
+              blurOnSubmit={false}
+              style={{ flex: 1, color: c.text, fontFamily: fonts.semibold, fontSize: 15, paddingVertical: 4 }}
+            />
+            {subText.trim() ? (
+              <Pressable onPress={addSub} hitSlop={8}>
+                <AppText variant="label" color="primary">
+                  Ekle
+                </AppText>
+              </Pressable>
+            ) : null}
+          </View>
+        </ScrollView>
+
+        {/* Alt butonlar (klavye açıkken gizlenir, yazılan alanı kapatmasın) */}
+        {kb === 0 ? (
+        <View style={{ flexDirection: 'row', gap: 12, paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12, borderTopWidth: 1, borderTopColor: c.border }}>
+          {!isNew ? <Button label="Sil" icon="trash-can-outline" variant="danger" onPress={remove} style={{ flex: 1 }} /> : null}
+          <Button label={isNew ? 'Kartı ekle' : 'Kaydet'} icon={isNew ? 'plus' : 'check'} onPress={save} style={{ flex: 2 }} />
+        </View>
+        ) : null}
+      </KeyboardSafeView>
+    </Screen>
+  );
+}

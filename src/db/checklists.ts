@@ -1,4 +1,4 @@
-import { getDb } from './index';
+import { getDb, tx } from './index';
 
 /** Basit listeler: alışveriş, bavul, okuma listesi gibi. Tarih, pano, öncelik yok. */
 
@@ -104,11 +104,10 @@ export async function addItems(listId: number, raw: string): Promise<number> {
     .map((l) => l.replace(/^[-*•\s]+/, '').trim())
     .filter(Boolean);
   if (!lines.length) return 0;
-  const db = await getDb();
-  const m = await db.getFirstAsync<{ m: number | null }>('SELECT MAX(sort) AS m FROM checklist_items WHERE list_id = ?', [listId]);
-  let sort = (m?.m ?? -1) + 1;
   const now = new Date().toISOString();
-  await db.withTransactionAsync(async () => {
+  await tx(async (db) => {
+    const m = await db.getFirstAsync<{ m: number | null }>('SELECT MAX(sort) AS m FROM checklist_items WHERE list_id = ?', [listId]);
+    let sort = (m?.m ?? -1) + 1;
     for (const text of lines) {
       await db.runAsync('INSERT INTO checklist_items (list_id, text, done, sort, created_at) VALUES (?, ?, 0, ?, ?)', [listId, text, sort++, now]);
     }
@@ -144,17 +143,17 @@ export async function restoreItem(item: ChecklistItem): Promise<void> {
 }
 
 export async function reorderItems(ids: number[]): Promise<void> {
-  const db = await getDb();
-  await db.withTransactionAsync(async () => {
+  await tx(async (db) => {
     for (let i = 0; i < ids.length; i++) await db.runAsync('UPDATE checklist_items SET sort = ? WHERE id = ?', [i, ids[i]]);
   });
 }
 
 export async function clearDoneItems(listId: number): Promise<ChecklistItem[]> {
-  const db = await getDb();
-  const removed = await db.getAllAsync<ChecklistItem>('SELECT * FROM checklist_items WHERE list_id = ? AND done = 1', [listId]);
-  await db.runAsync('DELETE FROM checklist_items WHERE list_id = ? AND done = 1', [listId]);
-  return removed;
+  return tx(async (db) => {
+    const removed = await db.getAllAsync<ChecklistItem>('SELECT * FROM checklist_items WHERE list_id = ? AND done = 1', [listId]);
+    await db.runAsync('DELETE FROM checklist_items WHERE list_id = ? AND done = 1', [listId]);
+    return removed;
+  });
 }
 
 export async function uncheckAll(listId: number): Promise<void> {

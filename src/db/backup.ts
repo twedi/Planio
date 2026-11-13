@@ -1,4 +1,4 @@
-import { getDb } from './index';
+import { getDb, tx } from './index';
 
 /** Her tablo için sütunlar ve eski yedeklerde eksik olabilecek sütunların varsayılanları */
 const TABLES: Record<string, { cols: string[]; defaults?: Record<string, unknown> }> = {
@@ -14,10 +14,11 @@ const TABLES: Record<string, { cols: string[]; defaults?: Record<string, unknown
   templates: { cols: ['id', 'name', 'hint', 'icon', 'color', 'lists', 'sort'], defaults: { hint: '', sort: 0 } },
   checklists: { cols: ['id', 'name', 'color', 'icon', 'sort', 'created_at'], defaults: { sort: 0 } },
   checklist_items: { cols: ['id', 'list_id', 'text', 'done', 'sort', 'created_at'], defaults: { done: 0, sort: 0 } },
+  settings: { cols: ['key', 'value'] },
 };
 
 /** Eski yedeklerde bulunmayabilecek tablolar: yedekte varsa geri yüklenir, yoksa mevcut hali korunur */
-const OPTIONAL_GROUPS = [['templates'], ['checklists', 'checklist_items']];
+const OPTIONAL_GROUPS = [['templates'], ['checklists', 'checklist_items'], ['settings']];
 
 const DATA_ORDER = ['boards', 'lists', 'cards', 'subtasks', 'tags', 'card_tags'];
 
@@ -30,8 +31,8 @@ export type BackupFile = {
 
 export async function exportAll(): Promise<string> {
   const db = await getDb();
-  const out: Record<string, unknown> = { app: 'duzen', version: 5, exportedAt: new Date().toISOString() };
-  for (const t of [...DATA_ORDER, 'templates', 'checklists', 'checklist_items']) {
+  const out: Record<string, unknown> = { app: 'duzen', version: 6, exportedAt: new Date().toISOString() };
+  for (const t of [...DATA_ORDER, 'templates', 'checklists', 'checklist_items', 'settings']) {
     out[t] = await db.getAllAsync(`SELECT * FROM ${t}`);
   }
   return JSON.stringify(out, null, 2);
@@ -44,8 +45,8 @@ export function parseBackup(text: string): BackupFile {
   } catch {
     throw new Error('Dosya okunamadı (geçerli bir JSON değil).');
   }
-  if (!data || data.app !== 'duzen' || ![1, 2, 3, 4, 5].includes(data.version)) {
-    throw new Error('Bu dosya Düzen yedeği gibi görünmüyor.');
+  if (!data || data.app !== 'duzen' || ![1, 2, 3, 4, 5, 6].includes(data.version)) {
+    throw new Error('Bu dosya Planio yedeği gibi görünmüyor.');
   }
   for (const t of DATA_ORDER) {
     if (!Array.isArray(data[t])) throw new Error(`Yedekte "${t}" bölümü eksik.`);
@@ -54,13 +55,12 @@ export function parseBackup(text: string): BackupFile {
 }
 
 export async function importAll(backup: BackupFile): Promise<void> {
-  const db = await getDb();
   const tables = [...DATA_ORDER];
   for (const group of OPTIONAL_GROUPS) {
     if (group.every((t) => Array.isArray(backup[t]))) tables.push(...group);
   }
 
-  await db.withTransactionAsync(async () => {
+  await tx(async (db) => {
     for (const t of [...tables].reverse()) {
       await db.runAsync(`DELETE FROM ${t}`);
     }

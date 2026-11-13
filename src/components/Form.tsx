@@ -1,11 +1,11 @@
 import React from 'react';
-import { Pressable, StyleProp, TextInput, TextInputProps, TextStyle, View, ViewStyle } from 'react-native';
+import { StyleProp, TextInput, TextInputProps, TextStyle, View, ViewStyle } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { AppText } from './AppText';
 import { useTheme } from '../ThemeContext';
 import { fonts } from '../theme';
 import Animated, { ZoomIn } from 'react-native-reanimated';
-import { PressableScale } from './Motion';
+import { EASE_OUT, PressableScale } from './Motion';
 import { tap } from '../haptics';
 
 export function FieldLabel({ children, style, right }: { children: string; style?: StyleProp<TextStyle>; right?: React.ReactNode }) {
@@ -71,9 +71,9 @@ export function ScreenHeader({
   const { theme } = useTheme();
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 10, paddingBottom: 8, gap: 12 }}>
-      <Pressable onPress={onBack} hitSlop={12} style={{ padding: 4 }}>
+      <PressableScale onPress={onBack} hitSlop={12} scaleTo={0.88} style={{ padding: 4 }}>
         <MaterialCommunityIcons name={closeIcon ? 'close' : 'arrow-left'} size={26} color={theme.colors.text} />
-      </Pressable>
+      </PressableScale>
       <View style={{ flex: 1 }}>
         <AppText variant="title" numberOfLines={1}>
           {title}
@@ -101,9 +101,10 @@ export function IconButton({
   const { theme } = useTheme();
   const c = theme.colors;
   return (
-    <Pressable
+    <PressableScale
       onPress={onPress}
       hitSlop={8}
+      scaleTo={0.9}
       style={{
         width: 44,
         height: 44,
@@ -114,7 +115,7 @@ export function IconButton({
       }}
     >
       <MaterialCommunityIcons name={icon} size={24} color={tone === 'tonal' ? c.onPrimaryContainer : c.text} />
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -123,13 +124,13 @@ export function Fab({ label, onPress, icon = 'plus' }: { label?: string; onPress
   const { theme } = useTheme();
   const c = theme.colors;
   return (
-    <Animated.View entering={ZoomIn.springify().damping(14).delay(120)} style={{ position: 'absolute', right: 16, bottom: 20 }}>
+    <Animated.View entering={ZoomIn.duration(220).delay(80).easing(EASE_OUT)} style={{ position: 'absolute', right: 16, bottom: 20 }}>
       <PressableScale
         onPress={() => {
           tap();
           onPress();
         }}
-        scaleTo={0.92}
+        scaleTo={0.95}
         style={{
           height: 58,
           minWidth: 58,

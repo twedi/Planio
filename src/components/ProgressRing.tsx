@@ -30,11 +30,11 @@ export function ProgressRing({
   const p = useSharedValue(0);
 
   useEffect(() => {
-    p.value = withTiming(Math.max(0, Math.min(1, value)), { duration, easing: Easing.out(Easing.cubic) });
+    p.set(withTiming(Math.max(0, Math.min(1, value)), { duration, easing: Easing.out(Easing.cubic) }));
   }, [value, duration, p]);
 
   const animatedProps = useAnimatedProps(() => ({
-    strokeDashoffset: circumference * (1 - p.value),
+    strokeDashoffset: circumference * (1 - p.get()),
   }));
 
   return (

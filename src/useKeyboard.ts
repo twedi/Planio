@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Dimensions, Keyboard, KeyboardEvent, Platform, ScrollView } from 'react-native';
 
 /**
@@ -46,7 +46,7 @@ export function useKeyboardHeight(): number {
  *           <TextInput onFocus={() => reveal('etiket')} />
  */
 export function useRevealOnFocus() {
-  const ref = useRef<ScrollView>(null);
+  const ref = useRef<React.ComponentRef<typeof ScrollView>>(null);
   const positions = useRef(new Map<string, number>());
 
   const track = (key: string) => (e: { nativeEvent: { layout: { y: number } } }) => {

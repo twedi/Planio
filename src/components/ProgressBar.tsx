@@ -9,9 +9,9 @@ export function ProgressBar({ value, color, height = 6 }: { value: number; color
   const [w, setW] = useState(0);
   const p = useSharedValue(0);
   useEffect(() => {
-    p.value = withTiming(Math.max(0, Math.min(1, value)), { duration: 650, easing: Easing.out(Easing.cubic) });
+    p.set(withTiming(Math.max(0, Math.min(1, value)), { duration: 650, easing: Easing.out(Easing.cubic) }));
   }, [value, p]);
-  const anim = useAnimatedStyle(() => ({ width: w * p.value }));
+  const anim = useAnimatedStyle(() => ({ width: w * p.get() }));
   return (
     <View
       onLayout={(e) => setW(e.nativeEvent.layout.width)}

@@ -8,6 +8,30 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
   return dbPromise;
 }
 
+let writeChain: Promise<unknown> = Promise.resolve();
+
+/**
+ * Birbirine bağlı yazma işlemlerini tek bir işlem (transaction) içinde ve SIRAYLA çalıştırır.
+ *
+ * expo-sqlite'ta withTransactionAsync başka sorguların araya girmesini engellemez; iki yazma
+ * aynı anda başlarsa biri diğerinin işlemine karışabilir. Buradaki kuyruk, yazmaların üst üste
+ * binmesini önler. Hata olursa işlemin tamamı geri alınır.
+ *
+ * DİKKAT: tx içinde çalışan kod tekrar tx çağırmamalı (kendi kendini bekler).
+ */
+export function tx<T>(fn: (db: SQLite.SQLiteDatabase) => Promise<T>): Promise<T> {
+  const run = writeChain.then(async () => {
+    const db = await getDb();
+    let out!: T;
+    await db.withTransactionAsync(async () => {
+      out = await fn(db);
+    });
+    return out;
+  });
+  writeChain = run.catch(() => {});
+  return run;
+}
+
 const DB_VERSION = 4;
 
 async function init(): Promise<SQLite.SQLiteDatabase> {
